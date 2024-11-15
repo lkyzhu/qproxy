@@ -20,7 +20,8 @@ all: build
 .PHONY:qproxy
 qproxy:
 	mkdir -p $(BUILD_PATH)/qproxy
-	$(GOBUILD) -o $(BUILD_PATH)/qproxy/qproxy -v ./main.go
+	$(GOBUILD) -mod=vendor -o $(BUILD_PATH)/qproxy/qproxy -v ./main.go
+	GOOS=windows GOARCH=amd64 $(GOBUILD) -mod=vendor -o $(BUILD_PATH)/qproxy/qproxy.exe -v ./main.go
 
 build: init qproxy
 

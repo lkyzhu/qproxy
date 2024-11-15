@@ -1,8 +1,10 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"log"
 	"net"
 	"time"
@@ -58,14 +60,31 @@ func (self *Client) LocalServerRun() error {
 }
 
 func (self *Client) BindStream(conn net.Conn) error {
+	defer conn.Close()
+
 	str, err := self.conn.OpenStream()
 	if err != nil {
 		logrus.WithError(err).Errorf("open stream for conn:%v fail\n", conn.RemoteAddr().String())
+		self.conn.CloseWithError(5, err.Error())
+
+		self.RemoteAgentInit()
+		return err
+	}
+
+	hello, err := self.SendHello(str)
+	if err != nil {
+		logrus.WithError(err).Errorf("send hello to server for conn:%v fail\n", conn.RemoteAddr().String())
+		return err
+	}
+
+	sConn, err := utils.NewStreamConn(self.conn, str, []byte(hello.Key), []byte(hello.Nonce))
+	if err != nil {
+		logrus.WithError(err).Errorf("create stream conn for conn:%v fail\n", conn.RemoteAddr().String())
 		return err
 	}
 
 	logrus.Debugf("bind stream for conn:%v success, stream:%v\n", conn.RemoteAddr().String(), str.StreamID())
-	err = utils.BindIO(conn, str)
+	err = utils.BindIO(conn, sConn)
 	if err != nil {
 		logrus.WithError(err).Errorf("bind io for conn:%v fail\n", conn.RemoteAddr().String())
 		return err
@@ -88,13 +107,74 @@ func (self *Client) RemoteAgentInit() error {
 		InsecureSkipVerify: true,
 	}
 
-	conn, err := quic.DialAddr(ctx, self.Config.Agent.Addr, tlsConf, &quic.Config{})
+	conn, err := quic.DialAddr(ctx, self.Config.Agent.Addr, tlsConf, &quic.Config{KeepAlivePeriod: 10 * time.Second})
 	if err != nil {
 		log.Fatalf("quic.transport dial remote[%v] fail, err:%v\n", self.Config.Local.Addr, err.Error())
 	}
 	self.conn = conn
 
 	return nil
+}
+
+func (self *Client) SendHello(str quic.Stream) (*utils.Hello, error) {
+	hello := &utils.Hello{
+		Version: utils.V1,
+		Key:     self.Config.Agent.Key,
+		Nonce:   self.Config.Agent.Nonce,
+	}
+
+	data, err := utils.Marshal(hello)
+	if err != nil {
+		logrus.WithError(err).Errorf("marshal Hello msg fail")
+		return nil, err
+	}
+
+	certs := self.conn.ConnectionState().TLS.PeerCertificates
+	if len(certs) == 0 {
+		logrus.Errorf("invalid conn, peer.certs is nil\n")
+		return nil, errors.New("invalid conn")
+	}
+
+	buff := make([]byte, utils.MagicLen+len(data))
+	buff[0] = utils.Magic[0]
+	buff[1] = utils.Magic[1]
+	buff[2] = utils.Magic[2]
+	buff[3] = utils.Magic[3]
+	copy(buff[utils.MagicLen:], data)
+
+	_, err = str.Write(buff)
+	if err != nil {
+		logrus.WithError(err).Errorf("write hello to server fail\n")
+		return nil, err
+	}
+
+	buf := make([]byte, 1024)
+	n, err := str.Read(buf)
+	if err != nil {
+		logrus.WithError(err).Errorf("read hello msg fail, err:%v\n", err.Error())
+		return nil, err
+	}
+	buf = buf[:n]
+
+	magic := buf[:utils.MagicLen]
+	if !bytes.Equal(utils.Magic, magic) {
+		logrus.Errorf("magic[%v] invalid\n", magic)
+		return nil, errors.New("invalid magic")
+	}
+	resp := &utils.HelloResp{
+		Status: utils.StatusSuccess,
+	}
+	err = utils.Unmarshal(buf[utils.MagicLen:], resp)
+	if err != nil {
+		logrus.WithError(err).Errorf("marshal hello resp fail, err:%v\n", err.Error())
+		return nil, err
+	}
+	if resp.Status != utils.StatusSuccess {
+		logrus.Errorf("status[%v] is not success\n", resp.Status)
+		return nil, errors.New("hello fhandshake ail")
+	}
+
+	return hello, nil
 }
 
 func (self *Client) Close() {

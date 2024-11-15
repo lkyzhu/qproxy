@@ -5,8 +5,10 @@ type Server struct {
 }
 
 type Client struct {
-	Addr string   `json:"addr"`
-	Cert CertConf `json:"cert"`
+	Addr  string   `json:"addr"`
+	Key   string   `json:"key"`
+	Nonce string   `json:"nonce"`
+	Cert  CertConf `json:"cert"`
 }
 
 type Config struct {
