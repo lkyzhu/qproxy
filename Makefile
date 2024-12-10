@@ -6,6 +6,21 @@ GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod 
 
+SUFFIX=""
+ifeq ($(OS), )
+	OS="linux"
+else ifeq($(OS), "windows")
+	SUFFIX=".exe"
+endif
+
+ifeq ($(ARCH), )
+	ARCH="amd64"
+endif
+
+ifeq ($(VERSION), )
+	VERSION="0.0.1"
+endif
+
 #if not set release_dir
 ifeq ("xx$(RELEASE_DIR)", "xx")
 	RELEASE_DIR=$(ROOT_DIR)/release
@@ -20,8 +35,8 @@ all: build
 .PHONY:qproxy
 qproxy:
 	mkdir -p $(BUILD_PATH)/qproxy
-	$(GOBUILD) -o $(BUILD_PATH)/qproxy/qproxy -v ./main.go
-	GOOS=windows GOARCH=amd64 $(GOBUILD) -o $(BUILD_PATH)/qproxy/qproxy.exe -v ./main.go
+	GOOS=$(OS) GOARCH=$(ARCH) $(GOBUILD) -o $(BUILD_PATH)/qproxy/qproxy$(SUFFIX) -v ./main.go
+	tar -zcvf  $(BUILD_PATH)/qproxy-$(OS)-$(ARCH)-$(VERSION).tar.gz -C $(BUILD_PATH) qproxy --remove-files
 
 build: init qproxy
 

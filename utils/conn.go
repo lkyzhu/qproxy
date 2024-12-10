@@ -40,24 +40,29 @@ type StreamConn struct {
 }
 
 func (self *StreamConn) Read(b []byte) (int, error) {
-	n, err := self.stream.Read(b)
-	if err != nil {
-		return 0, err
-	}
-
 	if self.cipher != nil {
-		self.cipher.XORKeyStream(b[:n], b[:n])
-	}
+		buf := make([]byte, len(b))
+		n, err := self.stream.Read(buf)
+		if err != nil {
+			return 0, err
+		}
 
-	return n, nil
+		self.cipher.XORKeyStream(b[:n], buf[:n])
+		return n, nil
+	} else {
+		return self.stream.Read(b)
+	}
 }
 
 func (self *StreamConn) Write(b []byte) (int, error) {
 	if self.cipher != nil {
-		self.cipher.XORKeyStream(b[:], b[:])
-		return self.stream.Write(b)
+		n := len(b)
+		buf := make([]byte, n)
+
+		self.cipher.XORKeyStream(buf, b[:n])
+		return self.stream.Write(buf)
 	} else {
-		return self.stream.Write(b)
+		return self.stream.Write(b[:])
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io/ioutil"
 	"log"
 	"net"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/lkyzhu/qproxy/utils"
 	"github.com/quic-go/quic-go"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/crypto/pkcs12"
 )
 
 type Client struct {
@@ -43,6 +45,7 @@ func (self *Client) LocalServerRun() error {
 	if err != nil {
 		log.Fatalf("listen addr[%v] fail, err:%v\n", self.Config.Local.Addr, err.Error())
 	}
+	log.Printf("local server started ^_^\n")
 
 	for {
 		conn, err := listener.Accept()
@@ -71,6 +74,12 @@ func (self *Client) BindStream(conn net.Conn) error {
 		return err
 	}
 
+	defer func() {
+		str.Close()
+		str.CancelRead(0)
+		str.CancelWrite(0)
+	}()
+
 	hello, err := self.SendHello(str)
 	if err != nil {
 		logrus.WithError(err).Errorf("send hello to server for conn:%v fail\n", conn.RemoteAddr().String())
@@ -96,13 +105,14 @@ func (self *Client) BindStream(conn net.Conn) error {
 func (self *Client) RemoteAgentInit() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cert, err := tls.LoadX509KeyPair(self.Config.Agent.Cert.Cert, self.Config.Agent.Cert.Key)
+
+	cert, err := self.loadAgentCert()
 	if err != nil {
-		log.Fatalf("load cert[%v/%v] fail, err:%v\n", self.Config.Agent.Cert.Cert, self.Config.Agent.Cert.Key, err.Error())
+		log.Fatalf("load agent cert fail, err:%v\n", err.Error())
 	}
 
 	tlsConf := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
+		Certificates:       []tls.Certificate{*cert},
 		ClientSessionCache: tls.NewLRUClientSessionCache(100),
 		InsecureSkipVerify: true,
 	}
@@ -112,8 +122,57 @@ func (self *Client) RemoteAgentInit() error {
 		log.Fatalf("quic.transport dial remote[%v] fail, err:%v\n", self.Config.Local.Addr, err.Error())
 	}
 	self.conn = conn
+	log.Printf("connect remote server success\n")
 
 	return nil
+}
+
+func (self *Client) loadAgentCert() (*tls.Certificate, error) {
+	cert := tls.Certificate{}
+
+	if self.Config.Agent.Cert.CertData != "" && self.Config.Agent.Cert.KeyData != "" {
+		c, err := tls.X509KeyPair([]byte(self.Config.Agent.Cert.CertData), []byte(self.Config.Agent.Cert.KeyData))
+		if err != nil {
+			log.Printf("pair tls cert fail, err:%v\n", err.Error())
+			return nil, err
+		}
+
+		cert = c
+	} else if self.Config.Agent.Cert.Pfx != "" {
+		data, err := ioutil.ReadFile(self.Config.Agent.Cert.Pfx)
+		if err != nil {
+			log.Printf("load pfx cert[%v] fail, err:%v\n", self.Config.Agent.Cert.Pfx, err.Error())
+			return nil, err
+		}
+		private, certificate, err := pkcs12.Decode(data, self.Config.Agent.Cert.Pwd)
+		if err != nil {
+			log.Printf("load decode cert[%v] fail, err:%v\n", self.Config.Agent.Cert.Pfx, err.Error())
+			return nil, err
+		}
+
+		if pData, ok := private.([]byte); ok {
+			c, err := tls.X509KeyPair(certificate.Raw, pData)
+			if err != nil {
+				log.Printf("pair tls cert[%v] fail, err:%v\n", self.Config.Agent.Cert.Pfx, err.Error())
+				return nil, err
+			}
+
+			cert = c
+		} else {
+			log.Printf("pair tls cert[%v] fail, err:%v\n", self.Config.Agent.Cert.Pfx, "private is invalid")
+			return nil, err
+		}
+	} else {
+		c, err := tls.LoadX509KeyPair(self.Config.Agent.Cert.Cert, self.Config.Agent.Cert.Key)
+		if err != nil {
+			log.Printf("load cert[%v/%v] fail, err:%v\n", self.Config.Agent.Cert.Cert, self.Config.Agent.Cert.Key, err.Error())
+			return nil, err
+		}
+
+		cert = c
+	}
+
+	return &cert, nil
 }
 
 func (self *Client) SendHello(str quic.Stream) (*utils.Hello, error) {

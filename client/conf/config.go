@@ -17,6 +17,10 @@ type Config struct {
 }
 
 type CertConf struct {
-	Cert string `json:"cert"`
-	Key  string `json:"key"`
+	Cert     string `json:"cert"`
+	CertData string `json:"certData"`
+	Key      string `json:"key"`
+	KeyData  string `json:"keyData"`
+	Pfx      string `json:"pfx"`
+	Pwd      string `json:"pwd"`
 }
