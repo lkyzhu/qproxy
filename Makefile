@@ -8,13 +8,13 @@ GOMOD=$(GOCMD) mod
 
 SUFFIX=""
 ifeq ($(OS), )
-	OS="linux"
+	OS=$(shell go env GOOS)
 else ifeq($(OS), "windows")
 	SUFFIX=".exe"
 endif
 
 ifeq ($(ARCH), )
-	ARCH="amd64"
+	ARCH=$(shell go env GOARCH)
 endif
 
 ifeq ($(VERSION), )
